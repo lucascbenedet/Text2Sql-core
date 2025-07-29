@@ -1,0 +1,62 @@
+[
+    {
+        "test_case_id": 1,
+        "prompt": "Who are the 10 customers who spent the most in the store, showing their full name, country, and total amount spent, ordered from highest to lowest spending?",
+        "expected_sql": "WITH gastos_por_cliente AS (\n  SELECT\n    c.customerid,\n    c.firstname || ' ' || c.lastname AS NomeCompleto,\n    c.Country,\n    SUM(i.Total) AS TotalGastos\n  FROM Customer c\n  JOIN Invoice i ON c.customerid = i.customerid\n  GROUP BY c.customerid, c.firstname, c.lastname, c.Country\n)\nSELECT\n  NomeCompleto,\n  Country,\n  TotalGastos,\n  RANK() OVER (ORDER BY TotalGastos DESC) AS Posicao\nFROM gastos_por_cliente\nORDER BY TotalGastos DESC\nLIMIT 10;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 2,
+        "prompt": "For each month of 2021 in 'YYYY-MM' format display the total sales up to that month, as well as the cumulative total of sales up to the current month, adding the value of the current month with the previous ones.",
+        "expected_sql": "WITH vendasmensais AS (\n  SELECT\n    DATE_FORMAT(i.InvoiceDate, '%Y-%m') AS MesAno,\n    SUM(i.Total) AS TotalMensal\n  FROM Invoice i\n  WHERE YEAR(i.InvoiceDate) = 2021\n  GROUP BY DATE_FORMAT(i.InvoiceDate, '%Y-%m')\n)\nSELECT\n  MesAno,\n  TotalMensal,\n  SUM(TotalMensal) OVER (ORDER BY MesAno) AS TotalAcumulado\nFROM vendasmensais\nORDER BY MesAno;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 3,
+        "prompt": "For a specific customer (e.g. CustomerId = 42), list the invoices sorted by date and show for each invoice: the date, the amount and the difference in dollars to the previous invoice.",
+        "expected_sql": "SELECT\n  i.invoiceid,\n  i.invoicedate,\n  i.Total AS ValorAtual,\n  i.Total - LAG(i.Total) OVER (PARTITION BY i.customerid ORDER BY i.invoicedate) AS DiferencaParaAnterior\nFROM Invoice i\nWHERE i.customerid = 42\nORDER BY i.invoicedate;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 4,
+        "prompt": "For each genre, display the 3 most popular tracks (in number of sales), showing the track name, genre name and how many times this track has been sold. Order by genre.",
+        "expected_sql": "WITH vendasporfaixa AS (\n  SELECT\n    t.trackid,\n    t.Name AS NomeFaixa,\n    g.Name AS NomeGenero,\n    COUNT(il.invoicelineid) AS TotalVendas\n  FROM Track t\n  JOIN Genre g ON t.genreid = g.genreid\n  JOIN invoiceline il ON t.trackid = il.trackid\n  GROUP BY t.trackid, t.Name, g.Name\n),\nrankfaixas AS (\n  SELECT\n    NomeFaixa,\n    NomeGenero,\n    TotalVendas,\n    ROW_NUMBER() OVER (PARTITION BY NomeGenero ORDER BY TotalVendas DESC) AS PosicaoGenero\n  FROM vendasporfaixa\n)\nSELECT\n  NomeGenero,\n  NomeFaixa,\n  TotalVendas\nFROM rankfaixas\nWHERE PosicaoGenero <= 3\nORDER BY NomeGenero, TotalVendas DESC;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 5,
+        "prompt": "List all the tracks (TrackId and Name) together with the quantity sold in the last invoice recorded and compare it with the quantity sold in the previous invoice (to measure the variation), considering the invoices sorted by global date.",
+        "expected_sql": "WITH vendasordenadas AS (\n  SELECT\n    t.trackid,\n    t.Name AS NomeFaixa,\n    il.Quantity,\n    i.invoicedate,\n    ROW_NUMBER() OVER (PARTITION BY t.trackid ORDER BY i.invoicedate) AS OrdemPorFaixa\n  FROM Track t\n  JOIN invoiceline il ON t.trackid = il.trackid\n  JOIN Invoice i ON il.invoiceid = i.invoiceid\n)\nSELECT\n  vo.trackid,\n  vo.NomeFaixa,\n  vo.Quantity AS QuantidadeAtual,\n  LEAD(vo.Quantity) OVER (PARTITION BY vo.trackid ORDER BY vo.invoicedate) AS QuantidadeProxima,\n  (vo.Quantity - LEAD(vo.Quantity) OVER (PARTITION BY vo.trackid ORDER BY vo.invoicedate)) AS Variacao\nFROM vendasordenadas vo\nWHERE OrdemPorFaixa = 1\nORDER BY vo.trackid;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 6,
+        "prompt": "For each customer, calculate the average time (in days) between the last two invoices issued. Display CustomerId, full name and this average (only customers with at least two invoices).",
+        "expected_sql": "WITH faturascliente AS (\n  SELECT\n    i.customerid,\n    i.invoicedate,\n    LAG(i.invoicedate) OVER (PARTITION BY i.customerid ORDER BY i.invoicedate) AS DataAnterior\n  FROM Invoice i\n),\ndiferencas AS (\n  SELECT\n    fc.customerid,\n    TIMESTAMPDIFF(SECOND, fc.DataAnterior, fc.invoicedate) AS DiasEntreFaturas\n  FROM faturascliente fc\n  WHERE fc.DataAnterior IS NOT NULL\n),\nmediaporcliente AS (\n  SELECT\n    d.customerid,\n    AVG(d.DiasEntreFaturas) AS MediaDias\n  FROM diferencas d\n  GROUP BY d.customerid\n)\nSELECT\n  c.customerid,\n  c.firstname || ' ' || c.lastname AS NomeCompleto,\n  ROUND(mp.MediaDias, 2) AS MediaDiasEntreFaturas\nFROM mediaporcliente mp\nJOIN Customer c ON mp.customerid = c.customerid\nORDER BY MediaDiasEntreFaturas;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 7,
+        "prompt": "List customers who have made more than one purchase, displaying their full name, date of first and last purchase, and the number of days between purchases. Sort by descending interval.",
+        "expected_sql": "nWITH datascompras AS (\n  SELECT\n    i.customerid,\n    MIN(i.invoicedate) AS DataPrimeira,\n    MAX(i.invoicedate) AS DataUltima,\n    COUNT(i.invoiceid) AS TotalFaturas\n  FROM Invoice i\n  GROUP BY i.customerid\n  HAVING COUNT(i.invoiceid) > 1\n)\nSELECT\n  c.customerid,\n  c.firstname || ' ' || c.lastname AS NomeCompleto,\n  dc.DataPrimeira,\n  dc.DataUltima,\n  EXTRACT(DAY FROM (dc.DataUltima - dc.DataPrimeira)) AS DiasEntreCompras\nFROM datascompras dc\nJOIN Customer c ON dc.customerid = c.customerid\nORDER BY DiasEntreCompras DESC;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 8,
+        "prompt": "Each invoice has a SupportRepId (employee). Sort employees by total revenue generated (sum of all invoices for which they were support reps), showing EmployeeId, full name, title and total revenue, in descending order.",
+        "expected_sql": "WITH receitaporfuncionario AS (\n  SELECT\n    e.employeeid,\n    e.firstname || ' ' || e.lastname AS NomeCompleto,\n    e.Title,\n    SUM(i.Total) AS ReceitaTotal\n  FROM Employee e\n  JOIN Customer c ON e.employeeid = c.supportrepid\n  JOIN Invoice i ON c.customerid = i.customerid\n  GROUP BY e.employeeid, e.firstname, e.lastname, e.Title\n)\nSELECT\n  employeeid,\n  NomeCompleto,\n  Title,\n  ReceitaTotal,\n  DENSE_RANK() OVER (ORDER BY ReceitaTotal DESC) AS Posicao\nFROM receitaporfuncionario\nORDER BY ReceitaTotal DESC;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 9,
+        "prompt": "Calculate the weekly revenue moving average for the entire set of 2021 (start), total revenue for the week and the moving average of revenue.",
+        "expected_sql": "WITH vendassemanais AS (\n  SELECT\n    WEEK(i.invoicedate) AS InicioSemana,\n    SUM(i.Total) AS ReceitaSemanal\n  FROM Invoice i\n  WHERE YEAR(i.invoicedate) = 2021\n  GROUP BY WEEK(i.invoicedate)\n)\nSELECT\n  vs.InicioSemana,\n  vs.ReceitaSemanal,\n  ROUND(\n    AVG(vs.ReceitaSemanal) OVER (\n      ORDER BY vs.InicioSemana\n      ROWS BETWEEN 3 PRECEDING AND CURRENT ROW\n    ), 2\n  ) AS MediaMovel4Semanas\nFROM vendassemanais vs\nORDER BY vs.InicioSemana;",
+        "expected_result": []
+    },
+    {
+        "test_case_id": 10,
+        "prompt": "Find playlists containing more than 50 tracks and, for each one, determine the most frequent genre in the tracks. Display the playlist id, playlist name and predominant genre.",
+        "expected_sql": "WITH contagemfaixas AS (\n  SELECT\n    pt.playlistid,\n    COUNT(pt.trackid) AS TotalFaixas\n  FROM playlisttrack pt\n  GROUP BY pt.playlistid\n  HAVING COUNT(pt.trackid) > 50\n),\ngeneroporplaylist AS (\n  SELECT\n    pt.playlistid,\n    t.genreid,\n    g.Name AS NomeGenero,\n    COUNT(*) AS QtdePorGenero,\n    ROW_NUMBER() OVER (\n      PARTITION BY pt.playlistid ORDER BY COUNT(*) DESC\n    ) AS PosicaoGenero\n  FROM playlisttrack pt\n  JOIN Track t ON pt.trackid = t.trackid\n  JOIN Genre g ON t.genreid = g.genreid\n  GROUP BY pt.playlistid, t.genreid, g.Name\n)\nSELECT\n  p.playlistid,\n  p.Name AS NomePlaylist,\n  gp.NomeGenero AS GeneroPredominante\nFROM Playlist p\nJOIN contagemfaixas cf ON p.playlistid = cf.playlistid\nJOIN generoporplaylist gp\n  ON p.playlistid = gp.playlistid AND gp.PosicaoGenero = 1\nORDER BY p.playlistid;",
+        "expected_result": []
+    }
+  ]
